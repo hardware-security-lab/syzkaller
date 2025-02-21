@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path"
 	"runtime"
 	"strings"
 	"sync"
@@ -143,6 +144,7 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
 	rpcCtx, done := context.WithCancel(context.Background())
 	ctx := &Context{
 		target:    target,
@@ -162,7 +164,7 @@ func main() {
 			SandboxArg: int64(*flagSandboxArg),
 		},
 	}
-
+	// log.Logf(0, "Basic prog check : %s\n", ctx.progs[0].Testcase)
 	cfg := &rpcserver.LocalConfig{
 		Config: rpcserver.Config{
 			Config: vminfo.Config{
@@ -241,11 +243,13 @@ func (ctx *Context) Next() *queue.Request {
 			return nil
 		}
 		p = ctx.progs[idx]
+		// log.Logf(0, "Id: %d, Testcase: %s\n", idx, p.Testcase)
+
 	}
 	if ctx.output {
 		data := p.Serialize()
 		ctx.logMu.Lock()
-		log.Logf(0, "executing program:\n%s", data)
+		log.Logf(0, "executing program:, Testcase: %s \n%s", p.Testcase, data)
 		ctx.logMu.Unlock()
 	}
 
@@ -285,9 +289,22 @@ func (ctx *Context) Done(req *queue.Request, res *queue.Result) bool {
 		ctx.printCallResults(res.Info)
 		if ctx.hints {
 			ctx.printHints(req.Prog, res.Info)
+			// log.Logf(0, "\nFile hai idhar: %s---------------------------------", req.Prog.Testcase)
 		}
 		if ctx.coverFile != "" {
 			ctx.dumpCoverage(res.Info)
+			log.Logf(0, "Testcase: %s, %s_prog%v\n", req.Prog.Testcase, ctx.coverFile, ctx.resultIndex.Add(0))
+			file, err := os.OpenFile("prog_mapping.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				fmt.Println("Error:", err)
+			}
+			defer file.Close() // Ensure file is closed after function exits
+
+			// Write to file
+			_, err = file.WriteString(fmt.Sprintf("%s\n", req.Prog.Testcase))
+			if err != nil {
+				fmt.Println("Error writing to file:", err)
+			}
 		}
 	}
 	completed := int(ctx.completed.Add(1))
@@ -360,6 +377,7 @@ func (ctx *Context) dumpCallCoverage(coverFile string, info *flatrpc.CallInfo) {
 
 func (ctx *Context) dumpCoverage(info *flatrpc.ProgInfo) {
 	coverFile := fmt.Sprintf("%s_prog%v", ctx.coverFile, ctx.resultIndex.Add(1))
+
 	for i, inf := range info.Calls {
 		log.Logf(0, "call #%v: signal %v, coverage %v", i, len(inf.Signal), len(inf.Cover))
 		ctx.dumpCallCoverage(fmt.Sprintf("%v.%v", coverFile, i), inf)
@@ -403,25 +421,55 @@ func loadPrograms(target *prog.Target, files []string) []*prog.Prog {
 	if *flagUnsafe {
 		mode = prog.NonStrictUnsafe
 	}
+	buf := new(bytes.Buffer)
+	fmt.Fprintf(buf, "")
+	err1 := osutil.WriteFile("prog_mapping.txt", buf.Bytes())
+	if err1 != nil {
+		log.Fatalf("failed to write coverage file: %v", err1)
+	}
 	for _, fn := range files {
 		if corpus, err := db.Open(fn, false); err == nil {
-			for _, rec := range corpus.Records {
+
+			for key, rec := range corpus.Records {
 				p, err := target.Deserialize(rec.Val, mode)
+				// log.Logf(0, "Test case : %s\n", key)
 				if err != nil {
 					continue
 				}
+				p.Testcase = key
+
+				// fmt.Fprintf(buf, "%s\n", key)
 				progs = append(progs, p)
 			}
+			// err1 := osutil.WriteFile("prog_mapping.txt", buf.Bytes())
+			// if err1 != nil {
+			// 	log.Fatalf("failed to write coverage file: %v", err)
+			// }
 			continue
 		}
 		data, err := os.ReadFile(fn)
+
+		// log.Logf(0, "\nFile hai idhar: %s---------------------------------", path.Base(fn))
+		// fmt.Println("File name is %s", fn)
+
+		// fmt.Printf("The type of fn is: %T\n", fn)
 		if err != nil {
 			log.Fatalf("failed to read log file: %v", err)
 		}
+
 		for _, entry := range target.ParseLog(data, mode) {
+			entry.P.Testcase = path.Base(fn)
+
+			// fmt.Fprintf(buf, "%s\n", entry.P.Testcase)
+
 			progs = append(progs, entry.P)
 		}
 	}
+	// err1 := osutil.WriteFile("prog_mapping.txt", buf.Bytes())
+	// if err1 != nil {
+	// 	log.Fatalf("failed to write coverage file: %v", err1)
+	// }
 	log.Logf(0, "parsed %v programs", len(progs))
+
 	return progs
 }

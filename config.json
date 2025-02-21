@@ -1,0 +1,11 @@
+{
+    "name": "syz-kaller-instance",          
+    "target": "linux/arm64",              
+    "http": ":56741",                     
+    "workdir": "/home/navneet/syzkaller",        
+    "kernel_obj": "/home/navneet/oracular_6.12-retsan/oracular",
+    "kernel_src": "/home/navneet/oracular_6.12-retsan/oracular",
+    "syzkaller": "/home/navneet/syzkaller",                    
+    "sandbox": "none",                     
+    "type": "qemu"                        
+  }

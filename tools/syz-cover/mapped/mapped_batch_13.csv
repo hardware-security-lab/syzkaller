@@ -1,0 +1,46 @@
+Address,Function,File
+0xffff800080017378,clear_ti_thread_flag,/home/navneet/oracular/include/linux/thread_info.h:94
+0xffff800080017380,__lse_atomic64_andnot,/home/navneet/oracular/arch/arm64/include/asm/atomic_lse.h:131
+0xffff80008001738c,user_disable_single_step,/home/navneet/oracular/arch/arm64/kernel/debug-monitors.c:457
+0xffff800080017530,generic_test_bit,/home/navneet/oracular/include/asm-generic/bitops/generic-non-atomic.h:128
+0xffff800080017560,user_rewind_single_step,/home/navneet/oracular/arch/arm64/kernel/debug-monitors.c:396
+0xffff800080018b60,generic_test_bit,/home/navneet/oracular/include/asm-generic/bitops/generic-non-atomic.h:128
+0xffff800080018bb8,clear_user_regs_spsr_ss,/home/navneet/oracular/arch/arm64/kernel/debug-monitors.c:152
+0xffff800080018bc0,clear_user_regs_spsr_ss,/home/navneet/oracular/arch/arm64/kernel/debug-monitors.c:152
+0xffff800080019100,____do_softirq,/home/navneet/oracular/arch/arm64/kernel/irq.c:81
+0xffff800080019140,do_softirq_own_stack,/home/navneet/oracular/arch/arm64/kernel/irq.c:86
+0xffff800080019df4,alternative_has_cap_likely,/home/navneet/oracular/arch/arm64/include/asm/alternative-macros.h:232
+0xffff800080019dfc,fpsimd_flush_cpu_state,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:1546 (discriminator 1)
+0xffff800080019e14,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff800080019e20,__lse_atomic64_or,/home/navneet/oracular/arch/arm64/include/asm/atomic_lse.h:132
+0xffff800080019e2c,fpsimd_flush_cpu_state,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:1557
+0xffff800080019ee0,fpsimd_bind_task_to_cpu,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:1728 (discriminator 1)
+0xffff800080019ef0,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff800080019f54,alternative_has_cap_unlikely,/home/navneet/oracular/arch/arm64/include/asm/alternative-macros.h:250
+0xffff800080019f5c,fpsimd_bind_task_to_cpu,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:1759
+0xffff80008001a140,fpsimd_save_user_state,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:440 (discriminator 1)
+0xffff80008001a14c,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff80008001a168,,
+0xffff80008001a190,,
+0xffff80008001a198,,
+0xffff80008001a1d0,,
+0xffff80008001a21c,,
+0xffff80008001a224,,
+0xffff80008001a298,,
+0xffff80008001a3f4,,
+0xffff80008001a410,,
+0xffff80008001a628,,
+0xffff80008001a630,,
+0xffff80008001a64c,,
+0xffff80008001a66c,,
+0xffff80008001a674,,
+0xffff80008001a67c,,
+0xffff80008001a688,,
+0xffff80008001a694,,
+0xffff80008001a7e8,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff80008001a808,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff80008001a81c,task_fpsimd_load,/home/navneet/oracular/arch/arm64/kernel/fpsimd.c:425
+0xffff80008001abc0,alternative_has_cap_likely,/home/navneet/oracular/arch/arm64/include/asm/alternative-macros.h:232
+0xffff80008001abcc,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff80008001abec,get_current,/home/navneet/oracular/arch/arm64/include/asm/current.h:19
+0xffff80008001abf8,__lse_atomic64_andnot,/home/navneet/oracular/arch/arm64/include/asm/atomic_lse.h:131

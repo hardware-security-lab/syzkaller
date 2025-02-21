@@ -1,0 +1,7 @@
+syz_mount_image$ext4(&(0x7f0000000240)='ext4\x00', &(0x7f0000000280)='./mnt\x00', 0x840, &(0x7f0000000080)={[{@test_dummy_encryption_v1}, {@test_dummy_encryption_v1}]}, 0x1, 0x241, &(0x7f0000000540)="$eJzs3U9oFFccB/DfzO42TbKUtL0UCm2hlNIGQnor9JJeWgiUEEoptIUUES9KIsQEb4knLx70rJKTlyDejB4ll+BFETxFzSFeBA0eDB70sDI7iUSz/oGJO+J8PjC7M7vvze8Ns983exkmgMoaiIiRiKhFxGBENCIi2dngm3wZ2Npc6F2ZiGi1/nyYtNvl27ntfv0RMR8RP0fEcprEwXrE7NK/649Xf//+xEzju3NL//R29SC3bKyv/bF5duz4xdGfZq/fvD+WxEg0XziuvZd0+KyeRHz2Loq9J5J62SPgbYwfvXAry/3nEfFtO/+NSCM/eSenP1puxI9nXtX31IMbX3ZzrMDea7Ua2TVwvgVUThoRzUjSoYjI19N0aCj/D3+71pcempo+MnhgamZyf9kzFbBXmhFrv13uudT/Uv7v1fL8Ax+uLP9/jS/eydY3a2WPBuimLP+D/8/9EPIPlSP/UF3yD9Ul/1Bdr8t/WtKYgO5w/Yfqkn+oLvmH6pJ/qC75h+ramX8AoFpaPWXfgQyUpez5BwAAAAAAAAAAAAAAAAAA2G2hd2Vie+lWzaunIzZ+jYh6p/q1recQfNx+7XuUZM2eS/Juhfz3dcEdFHS+5LuvP7lbbv1rX5Vbf24yYv5YRAzX67t/f0nh52B8+obvG/sKFijol7/Lrf90sdz6o6sRV7L5Z7jT/JPGF+33zvNPMzt/BesfflJwBwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHTNswAAAP//ceptKw==")
+r0 = openat$cgroup_ro(0xffffffffffffff9c, &(0x7f0000000840)='memory.events.local\x00', 0x275a, 0x0)
+write$binfmt_script(r0, &(0x7f0000000040), 0x208e24b)
+mmap(&(0x7f0000000000/0xb36000)=nil, 0xb36000, 0x2, 0x28011, r0, 0x0)
+fdatasync(r0)
+madvise(&(0x7f0000000000/0x600000)=nil, 0x600003, 0x15)
+ftruncate(r0, 0x8200)

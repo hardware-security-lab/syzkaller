@@ -3,8 +3,8 @@
 *.cfg
 *.tmp
 *.img
-workdir*
-
+workdir
+*.db
 bin/
 dashboard/app/config_prod.go
 

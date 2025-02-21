@@ -12,6 +12,7 @@ type Prog struct {
 	Target   *Target
 	Calls    []*Call
 	Comments []string
+	Testcase string
 
 	// Was deserialized using Unsafe mode, so can do unsafe things.
 	isUnsafe bool

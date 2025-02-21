@@ -298,6 +298,7 @@ func (p *parser) parseProg() (*Prog, error) {
 	for p.Scan() {
 		if p.EOF() {
 			if p.comment != "" {
+				fmt.Printf("Comment type is %T\n", p.comment)
 				prog.Comments = append(prog.Comments, p.comment)
 				p.comment = ""
 			}
@@ -305,7 +306,9 @@ func (p *parser) parseProg() (*Prog, error) {
 		}
 		if p.Char() == '#' {
 			if p.comment != "" {
+				fmt.Printf("Comment type is %T\n", p.comment)
 				prog.Comments = append(prog.Comments, p.comment)
+
 			}
 			p.comment = strings.TrimSpace(p.s[p.i+1:])
 			continue

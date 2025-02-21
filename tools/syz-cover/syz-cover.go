@@ -188,6 +188,7 @@ func initPCs(rg *cover.ReportGenerator) []uint64 {
 		pcs = rg.CallbackPoints
 		return pcs
 	}
+
 	pcs, err := readPCs(flag.Args())
 	if err != nil {
 		tool.Fail(err)
@@ -197,22 +198,88 @@ func initPCs(rg *cover.ReportGenerator) []uint64 {
 
 func readPCs(files []string) ([]uint64, error) {
 	var pcs []uint64
+	// fmt.Printf("Files %s", files[0])
 	for _, file := range files {
-		data, err := os.ReadFile(file)
+
+		// Check if the path is a directory
+		fileInfo, err := os.Stat(file)
 		if err != nil {
 			return nil, err
 		}
-		for s := bufio.NewScanner(bytes.NewReader(data)); s.Scan(); {
-			line := strings.TrimSpace(s.Text())
-			if line == "" {
-				continue
-			}
-			pc, err := strconv.ParseUint(line, 0, 64)
+		if fileInfo.IsDir() {
+			// Read all files in the directory
+			entries, err := os.ReadDir(file)
 			if err != nil {
 				return nil, err
 			}
-			pcs = append(pcs, pc)
+			var x int = 0
+			for _, entry := range entries {
+
+				if !entry.IsDir() { // Skip directories
+					fullPath := file + string(os.PathSeparator) + entry.Name()
+					newPCs, err := readPCFile(fullPath)
+					if err != nil {
+						return nil, err
+					}
+					// for _, pc := range newPCs {
+					// 	pcs = append(pcs, pc)
+					// }
+					pcs = append(pcs, newPCs...)
+					x += 1
+					fmt.Printf("Iteration %d\n", x)
+					fmt.Println("Number of elements in the pcs array:", len(pcs))
+
+				}
+			}
+		} else {
+			// Process the file directly
+			newPCs, err := readPCFile(file)
+			if err != nil {
+				return nil, err
+			}
+			// for _, pc := range newPCs {
+			// 	pcs = append(pcs, pc)
+			// }
+			pcs = append(pcs, newPCs...)
 		}
+
+		// data, err := os.ReadFile(file)
+		// if err != nil {
+		// 	fmt.Print("Failure due to directory")
+		// 	return nil, err
+		// }
+		// for s := bufio.NewScanner(bytes.NewReader(data)); s.Scan(); {
+		// 	line := strings.TrimSpace(s.Text())
+		// 	if line == "" {
+		// 		continue
+		// 	}
+		// 	pc, err := strconv.ParseUint(line, 0, 64)
+		// 	if err != nil {
+		// 		return nil, err
+		// 	}
+		// 	pcs = append(pcs, pc)
+		// }
+	}
+	return pcs, nil
+}
+
+// Helper function to read PCs from a single file
+func readPCFile(file string) ([]uint64, error) {
+	var pcs []uint64
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return nil, err
+	}
+	for s := bufio.NewScanner(bytes.NewReader(data)); s.Scan(); {
+		line := strings.TrimSpace(s.Text())
+		if line == "" {
+			continue
+		}
+		pc, err := strconv.ParseUint(line, 0, 64)
+		if err != nil {
+			return nil, err
+		}
+		pcs = append(pcs, pc)
 	}
 	return pcs, nil
 }
