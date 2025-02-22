@@ -12,33 +12,45 @@ import (
 
 type Output struct {
 	Functions       []*Function      `json:"functions,omitempty"`
-	Includes        []string         `json:"includes,omitempty"`
-	Defines         []*Define        `json:"defines,omitempty"`
+	Consts          []*ConstInfo     `json:"consts,omitempty"`
 	Enums           []*Enum          `json:"enums,omitempty"`
 	Structs         []*Struct        `json:"structs,omitempty"`
 	Syscalls        []*Syscall       `json:"syscalls,omitempty"`
 	FileOps         []*FileOps       `json:"file_ops,omitempty"`
+	Ioctls          []*Ioctl         `json:"ioctls,omitempty"`
 	IouringOps      []*IouringOp     `json:"iouring_ops,omitempty"`
 	NetlinkFamilies []*NetlinkFamily `json:"netlink_families,omitempty"`
 	NetlinkPolicies []*NetlinkPolicy `json:"netlink_policies,omitempty"`
 }
 
 type Function struct {
-	Name     string        `json:"name,omitempty"`
-	File     string        `json:"file,omitempty"`
-	IsStatic bool          `json:"is_static,omitempty"`
-	LOC      int           `json:"loc,omitempty"`
-	Calls    []string      `json:"calls,omitempty"`
-	Facts    []*TypingFact `json:"facts,omitempty"`
+	Name     string `json:"name,omitempty"`
+	File     string `json:"file,omitempty"`
+	IsStatic bool   `json:"is_static,omitempty"`
+	// Information about function scopes. There is a global scope (with Arg=-1),
+	// and scope for each switch case on the function argument.
+	Scopes []*FunctionScope `json:"scopes,omitempty"`
 
 	callers int
 	calls   []*Function
 	facts   map[string]*typingNode
 }
 
-type Define struct {
-	Name  string `json:"name,omitempty"`
-	Value string `json:"value,omitempty"`
+type FunctionScope struct {
+	// The function argument index that is switched on (-1 for the global scope).
+	Arg int `json:"arg"`
+	// The set of case values for this scope.
+	// It's empt for the global scope for the default case scope.
+	Values []string      `json:"values,omitempty"`
+	LOC    int           `json:"loc,omitempty"`
+	Calls  []string      `json:"calls,omitempty"`
+	Facts  []*TypingFact `json:"facts,omitempty"`
+}
+
+type ConstInfo struct {
+	Name     string `json:"name"`
+	Filename string `json:"filename"`
+	Value    int64  `json:"value"`
 }
 
 type Field struct {
@@ -63,16 +75,15 @@ type Syscall struct {
 type FileOps struct {
 	Name string `json:"name,omitempty"`
 	// Names of callback functions.
-	Open       string      `json:"open,omitempty"`
-	Read       string      `json:"read,omitempty"`
-	Write      string      `json:"write,omitempty"`
-	Mmap       string      `json:"mmap,omitempty"`
-	Ioctl      string      `json:"ioctl,omitempty"`
-	IoctlCmds  []*IoctlCmd `json:"ioctl_cmds,omitempty"`
-	SourceFile string      `json:"source_file,omitempty"`
+	Open       string `json:"open,omitempty"`
+	Read       string `json:"read,omitempty"`
+	Write      string `json:"write,omitempty"`
+	Mmap       string `json:"mmap,omitempty"`
+	Ioctl      string `json:"ioctl,omitempty"`
+	SourceFile string `json:"source_file,omitempty"`
 }
 
-type IoctlCmd struct {
+type Ioctl struct {
 	// Literal name of the command (e.g. KCOV_REMOTE_ENABLE).
 	Name string `json:"name,omitempty"`
 	Type *Type  `json:"type,omitempty"`
@@ -111,12 +122,13 @@ type NetlinkAttr struct {
 }
 
 type Struct struct {
-	Name     string   `json:"name,omitempty"`
-	ByteSize int      `json:"byte_size,omitempty"`
-	IsUnion  bool     `json:"is_union,omitempty"`
-	IsPacked bool     `json:"is_packed,omitempty"`
-	Align    int      `json:"align,omitempty"`
-	Fields   []*Field `json:"fields,omitempty"`
+	Name      string   `json:"name,omitempty"`
+	ByteSize  int      `json:"byte_size,omitempty"`
+	Align     int      `json:"align,omitempty"`
+	IsUnion   bool     `json:"is_union,omitempty"`
+	IsPacked  bool     `json:"is_packed,omitempty"`
+	AlignAttr int      `json:"align_attr,omitempty"`
+	Fields    []*Field `json:"fields,omitempty"`
 }
 
 type Enum struct {
@@ -150,9 +162,11 @@ type PtrType struct {
 }
 
 type ArrayType struct {
-	Elem    *Type `json:"elem,omitempty"`
-	MinSize int   `json:"min_size,omitempty"`
-	MaxSize int   `json:"max_size,omitempty"`
+	Elem        *Type `json:"elem,omitempty"`
+	MinSize     int   `json:"min_size,omitempty"`
+	MaxSize     int   `json:"max_size,omitempty"`
+	Align       int   `json:"align,omitempty"`
+	IsConstSize bool  `json:"is_const_size,omitempty"`
 }
 
 type BufferType struct {
@@ -199,12 +213,12 @@ type EntityGlobalAddr struct {
 
 func (out *Output) Merge(other *Output) {
 	out.Functions = append(out.Functions, other.Functions...)
-	out.Includes = append(out.Includes, other.Includes...)
-	out.Defines = append(out.Defines, other.Defines...)
+	out.Consts = append(out.Consts, other.Consts...)
 	out.Enums = append(out.Enums, other.Enums...)
 	out.Structs = append(out.Structs, other.Structs...)
 	out.Syscalls = append(out.Syscalls, other.Syscalls...)
 	out.FileOps = append(out.FileOps, other.FileOps...)
+	out.Ioctls = append(out.Ioctls, other.Ioctls...)
 	out.IouringOps = append(out.IouringOps, other.IouringOps...)
 	out.NetlinkFamilies = append(out.NetlinkFamilies, other.NetlinkFamilies...)
 	out.NetlinkPolicies = append(out.NetlinkPolicies, other.NetlinkPolicies...)
@@ -212,12 +226,12 @@ func (out *Output) Merge(other *Output) {
 
 func (out *Output) SortAndDedup() {
 	out.Functions = sortAndDedupSlice(out.Functions)
-	out.Includes = sortAndDedupSlice(out.Includes)
-	out.Defines = sortAndDedupSlice(out.Defines)
+	out.Consts = sortAndDedupSlice(out.Consts)
 	out.Enums = sortAndDedupSlice(out.Enums)
 	out.Structs = sortAndDedupSlice(out.Structs)
 	out.Syscalls = sortAndDedupSlice(out.Syscalls)
 	out.FileOps = sortAndDedupSlice(out.FileOps)
+	out.Ioctls = sortAndDedupSlice(out.Ioctls)
 	out.IouringOps = sortAndDedupSlice(out.IouringOps)
 	out.NetlinkFamilies = sortAndDedupSlice(out.NetlinkFamilies)
 	out.NetlinkPolicies = sortAndDedupSlice(out.NetlinkPolicies)
@@ -229,8 +243,8 @@ func (out *Output) SetSourceFile(file string, updatePath func(string) string) {
 	for _, fn := range out.Functions {
 		fn.File = updatePath(fn.File)
 	}
-	for i, inc := range out.Includes {
-		out.Includes[i] = updatePath(inc)
+	for _, ci := range out.Consts {
+		ci.Filename = updatePath(ci.Filename)
 	}
 	for _, call := range out.Syscalls {
 		call.SourceFile = file

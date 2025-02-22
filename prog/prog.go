@@ -92,7 +92,7 @@ type ArgCommon struct {
 	dir Dir
 }
 
-func (arg ArgCommon) Type() Type {
+func (arg *ArgCommon) Type() Type {
 	if arg.ref == 0 {
 		panic("broken type ref")
 	}
@@ -273,9 +273,7 @@ func (arg *GroupArg) Size() uint64 {
 					offset += typ.AlignAttr - offset%typ.AlignAttr
 				}
 			}
-			if size < offset {
-				size = offset
-			}
+			size = max(size, offset)
 		}
 		return size
 	case *ArrayType:
@@ -476,11 +474,6 @@ func removeArg(arg0 Arg) {
 			replaceResultArg(arg1, arg2)
 		}
 	})
-}
-
-// RemoveArg is the public alias for the removeArg method.
-func RemoveArg(arg Arg) {
-	removeArg(arg)
 }
 
 // RemoveCall removes call idx from p.

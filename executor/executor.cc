@@ -484,6 +484,17 @@ static void parse_handshake(const handshake_req& req);
 #include "syscalls.h"
 
 #if GOOS_linux
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+#define MAP_FIXED_EXCLUSIVE MAP_FIXED_NOREPLACE
+#elif GOOS_freebsd
+#define MAP_FIXED_EXCLUSIVE (MAP_FIXED | MAP_EXCL)
+#else
+#define MAP_FIXED_EXCLUSIVE MAP_FIXED // The check is not supported.
+#endif
+
+#if GOOS_linux
 #include "executor_linux.h"
 #elif GOOS_fuchsia
 #include "executor_fuchsia.h"
@@ -510,11 +521,13 @@ public:
 		if (used_)
 			fail("recursion in CoverAccessScope");
 		used_ = true;
-		cover_unprotect(cov_);
+		if (flag_coverage)
+			cover_unprotect(cov_);
 	}
 	~CoverAccessScope()
 	{
-		cover_protect(cov_);
+		if (flag_coverage)
+			cover_protect(cov_);
 		used_ = false;
 	}
 

@@ -53,6 +53,8 @@ struct ArrType {
   FieldType Elem;
   int MinSize = 0;
   int MaxSize = 0;
+  int Align = 0;
+  bool IsConstSize = false;
 };
 
 struct BufferType {
@@ -62,13 +64,10 @@ struct BufferType {
   bool IsNonTerminated = false;
 };
 
-struct Include {
-  std::string Filename;
-};
-
-struct Define {
+struct ConstInfo {
   std::string Name;
-  std::string Value;
+  std::string Filename;
+  int64_t Value;
 };
 
 struct Field {
@@ -82,9 +81,10 @@ struct Field {
 struct Struct {
   std::string Name;
   int ByteSize = 0;
+  int Align = 0;
   bool IsUnion = false;
   bool IsPacked = false;
-  int Align = 0;
+  int AlignAttr = 0;
   std::vector<Field> Fields;
 };
 
@@ -93,7 +93,7 @@ struct Enum {
   std::vector<std::string> Values;
 };
 
-struct IoctlCmd {
+struct Ioctl {
   std::string Name;
   FieldType Type;
 };
@@ -105,7 +105,6 @@ struct FileOps {
   std::string Write;
   std::string Mmap;
   std::string Ioctl;
-  std::vector<IoctlCmd> IoctlCmds;
 };
 
 struct EntityReturn {
@@ -157,13 +156,19 @@ struct TypingFact {
   TypingEntity Dst;
 };
 
+struct FunctionScope {
+  int Arg = 0;
+  int LOC = 0;
+  std::vector<std::string> Values;
+  std::vector<std::string> Calls;
+  std::vector<TypingFact> Facts;
+};
+
 struct Function {
   std::string Name;
   std::string File;
   bool IsStatic = false;
-  int LOC = 0;
-  std::vector<std::string> Calls;
-  std::vector<TypingFact> Facts;
+  std::vector<FunctionScope> Scopes;
 };
 
 struct Syscall {
@@ -201,9 +206,10 @@ struct NetlinkPolicy {
   std::vector<NetlinkAttr> Attrs;
 };
 
-inline void print(JSONPrinter& Printer, const Define& V) {
+inline void print(JSONPrinter& Printer, const ConstInfo& V) {
   JSONPrinter::Scope Scope(Printer);
   Printer.Field("name", V.Name);
+  Printer.Field("filename", V.Filename);
   Printer.Field("value", V.Value, true);
 }
 
@@ -219,10 +225,11 @@ inline void print(JSONPrinter& Printer, const Field& V) {
 inline void print(JSONPrinter& Printer, const Struct& V) {
   JSONPrinter::Scope Scope(Printer);
   Printer.Field("name", V.Name);
+  Printer.Field("align", V.Align);
   Printer.Field("byte_size", V.ByteSize);
   Printer.Field("is_union", V.IsUnion);
   Printer.Field("is_packed", V.IsPacked);
-  Printer.Field("align", V.Align);
+  Printer.Field("align_attr", V.AlignAttr);
   Printer.Field("fields", V.Fields, true);
 }
 
@@ -267,7 +274,9 @@ inline void print(JSONPrinter& Printer, const ArrType& V) {
   JSONPrinter::Scope Scope(Printer);
   Printer.Field("elem", V.Elem);
   Printer.Field("min_size", V.MinSize);
-  Printer.Field("max_size", V.MaxSize, true);
+  Printer.Field("max_size", V.MaxSize);
+  Printer.Field("align", V.Align);
+  Printer.Field("is_const_size", V.IsConstSize, true);
 }
 
 inline void print(JSONPrinter& Printer, const BufferType& V) {
@@ -278,7 +287,7 @@ inline void print(JSONPrinter& Printer, const BufferType& V) {
   Printer.Field("is_non_terminated", V.IsNonTerminated, true);
 }
 
-inline void print(JSONPrinter& Printer, const IoctlCmd& V) {
+inline void print(JSONPrinter& Printer, const Ioctl& V) {
   JSONPrinter::Scope Scope(Printer);
   Printer.Field("name", V.Name);
   Printer.Field("type", V.Type, true);
@@ -291,8 +300,7 @@ inline void print(JSONPrinter& Printer, const FileOps& V) {
   Printer.Field("read", V.Read);
   Printer.Field("write", V.Write);
   Printer.Field("mmap", V.Mmap);
-  Printer.Field("ioctl", V.Ioctl);
-  Printer.Field("ioctl_cmds", V.IoctlCmds, true);
+  Printer.Field("ioctl", V.Ioctl, true);
 }
 
 inline void print(JSONPrinter& Printer, const EntityReturn& V) {
@@ -350,14 +358,21 @@ inline void print(JSONPrinter& Printer, const TypingFact& V) {
   Printer.Field("dst", V.Dst, true);
 }
 
+inline void print(JSONPrinter& Printer, const FunctionScope& V) {
+  JSONPrinter::Scope Scope(Printer);
+  Printer.Field("arg", V.Arg);
+  Printer.Field("values", V.Values);
+  Printer.Field("loc", V.LOC);
+  Printer.Field("calls", V.Calls);
+  Printer.Field("facts", V.Facts, true);
+}
+
 inline void print(JSONPrinter& Printer, const Function& V) {
   JSONPrinter::Scope Scope(Printer);
   Printer.Field("name", V.Name);
   Printer.Field("file", V.File);
   Printer.Field("is_static", V.IsStatic);
-  Printer.Field("loc", V.LOC);
-  Printer.Field("calls", V.Calls);
-  Printer.Field("facts", V.Facts, true);
+  Printer.Field("scopes", V.Scopes, true);
 }
 
 inline void print(JSONPrinter& Printer, const Syscall& V) {
@@ -412,17 +427,13 @@ inline FieldType TodoType() {
 
 class Output {
 public:
-  void emit(Include&& Inc) {
-    if (IncludesDedup.insert(Inc.Filename).second)
-      Includes.push_back(Inc.Filename);
-  }
-
   void emit(Function&& V) { Functions.push_back(std::move(V)); }
-  void emit(Define&& V) { Defines.push_back(std::move(V)); }
+  void emit(ConstInfo&& V) { Consts.push_back(std::move(V)); }
   void emit(Struct&& V) { Structs.push_back(std::move(V)); }
   void emit(Enum&& V) { Enums.push_back(std::move(V)); }
   void emit(Syscall&& V) { Syscalls.push_back(std::move(V)); }
   void emit(FileOps&& V) { FileOps.push_back(std::move(V)); }
+  void emit(Ioctl&& V) { Ioctls.push_back(std::move(V)); }
   void emit(IouringOp&& V) { IouringOps.push_back(std::move(V)); }
   void emit(NetlinkFamily&& V) { NetlinkFamilies.push_back(std::move(V)); }
   void emit(NetlinkPolicy&& V) { NetlinkPolicies.push_back(std::move(V)); }
@@ -430,12 +441,12 @@ public:
   void print() const {
     JSONPrinter Printer;
     Printer.Field("functions", Functions);
-    Printer.Field("includes", Includes);
-    Printer.Field("defines", Defines);
+    Printer.Field("consts", Consts);
     Printer.Field("enums", Enums);
     Printer.Field("structs", Structs);
     Printer.Field("syscalls", Syscalls);
     Printer.Field("file_ops", FileOps);
+    Printer.Field("ioctls", Ioctls);
     Printer.Field("iouring_ops", IouringOps);
     Printer.Field("netlink_families", NetlinkFamilies);
     Printer.Field("netlink_policies", NetlinkPolicies, true);
@@ -443,13 +454,12 @@ public:
 
 private:
   std::vector<Function> Functions;
-  std::vector<std::string> Includes;
-  std::unordered_set<std::string> IncludesDedup;
-  std::vector<Define> Defines;
+  std::vector<ConstInfo> Consts;
   std::vector<Enum> Enums;
   std::vector<Struct> Structs;
   std::vector<Syscall> Syscalls;
   std::vector<FileOps> FileOps;
+  std::vector<Ioctl> Ioctls;
   std::vector<IouringOp> IouringOps;
   std::vector<NetlinkFamily> NetlinkFamilies;
   std::vector<NetlinkPolicy> NetlinkPolicies;

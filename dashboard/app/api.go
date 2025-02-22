@@ -26,7 +26,6 @@ import (
 	"github.com/google/syzkaller/pkg/asset"
 	"github.com/google/syzkaller/pkg/auth"
 	"github.com/google/syzkaller/pkg/coveragedb"
-	"github.com/google/syzkaller/pkg/coveragedb/spannerclient"
 	"github.com/google/syzkaller/pkg/debugtracer"
 	"github.com/google/syzkaller/pkg/email"
 	"github.com/google/syzkaller/pkg/gcs"
@@ -105,22 +104,23 @@ var maxCrashes = func() int {
 func handleJSON(fn JSONHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := appengine.NewContext(r)
+		c = SetCoverageDBClient(c, coverageDBClient)
 		reply, err := fn(c, r)
 		if err != nil {
 			status := logErrorPrepareStatus(c, err)
 			http.Error(w, err.Error(), status)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		wJS := w.(io.Writer)
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-			w.Header().Set("Content-Encoding", "gzip")
-			gw := gzip.NewWriter(w)
-			defer gw.Close()
-			wJS = gw
-		}
+
+		wJS := newGzipResponseWriterCloser(w)
+		defer wJS.Close()
 		if err := json.NewEncoder(wJS).Encode(reply); err != nil {
 			log.Errorf(c, "failed to encode reply: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := wJS.writeResult(r); err != nil {
+			log.Errorf(c, "wJS.writeResult: %s", err.Error())
 		}
 	})
 }
@@ -906,12 +906,8 @@ func reportCrash(c context.Context, build *Build, req *dashapi.Crash) (*Bug, err
 			bug.NumRepro++
 			bug.LastReproTime = now
 		}
-		if bug.ReproLevel < reproLevel {
-			bug.ReproLevel = reproLevel
-		}
-		if bug.HeadReproLevel < reproLevel {
-			bug.HeadReproLevel = reproLevel
-		}
+		bug.ReproLevel = max(bug.ReproLevel, reproLevel)
+		bug.HeadReproLevel = max(bug.HeadReproLevel, reproLevel)
 		if len(req.Report) != 0 {
 			bug.HasReport = true
 		}
@@ -1231,28 +1227,16 @@ func apiManagerStats(c context.Context, ns string, payload io.Reader) (interface
 		mgr.Link = req.Addr
 		mgr.LastAlive = now
 		mgr.CurrentUpTime = req.UpTime
-		if cur := int64(req.Corpus); cur > stats.MaxCorpus {
-			stats.MaxCorpus = cur
-		}
-		if cur := int64(req.PCs); cur > stats.MaxPCs {
-			stats.MaxPCs = cur
-		}
-		if cur := int64(req.Cover); cur > stats.MaxCover {
-			stats.MaxCover = cur
-		}
-		if cur := int64(req.CrashTypes); cur > stats.CrashTypes {
-			stats.CrashTypes = cur
-		}
+		stats.MaxCorpus = max(stats.MaxCorpus, int64(req.Corpus))
+		stats.MaxPCs = max(stats.MaxPCs, int64(req.PCs))
+		stats.MaxCover = max(stats.MaxCover, int64(req.Cover))
+		stats.CrashTypes = max(stats.CrashTypes, int64(req.CrashTypes))
 		stats.TotalFuzzingTime += req.FuzzingTime
 		stats.TotalCrashes += int64(req.Crashes)
 		stats.SuppressedCrashes += int64(req.SuppressedCrashes)
 		stats.TotalExecs += int64(req.Execs)
-		if cur := int64(req.TriagedCoverage); cur > stats.TriagedCoverage {
-			stats.TriagedCoverage = cur
-		}
-		if cur := int64(req.TriagedPCs); cur > stats.TriagedPCs {
-			stats.TriagedPCs = cur
-		}
+		stats.TriagedCoverage = max(stats.TriagedCoverage, int64(req.TriagedCoverage))
+		stats.TriagedPCs = max(stats.TriagedPCs, int64(req.TriagedPCs))
 		return nil
 	})
 	return nil, err
@@ -1952,7 +1936,7 @@ func apiCreateUploadURL(c context.Context, payload io.Reader) (interface{}, erro
 
 // apiSaveCoverage reads jsonl data from payload and stores it to coveragedb.
 // First payload jsonl line is a coveragedb.HistoryRecord (w/o session and time).
-// Second+ records are coveragedb.MergedCoverageRecord.
+// Second+ records are coveragedb.JSONLWrapper.
 func apiSaveCoverage(c context.Context, payload io.Reader) (interface{}, error) {
 	descr := new(coveragedb.HistoryRecord)
 	jsonDec := json.NewDecoder(payload)
@@ -1964,12 +1948,7 @@ func apiSaveCoverage(c context.Context, payload io.Reader) (interface{}, error) 
 		sss = service.List()
 		log.Infof(c, "found %d subsystems for %s namespace", len(sss), descr.Namespace)
 	}
-	client, err := spannerclient.NewClient(c, appengine.AppID(context.Background()))
-	if err != nil {
-		return 0, fmt.Errorf("coveragedb.NewClient() failed: %s", err.Error())
-	}
-	defer client.Close()
-	rowsCreated, err := coveragedb.SaveMergeResult(c, client, descr, jsonDec, sss)
+	rowsCreated, err := coveragedb.SaveMergeResult(c, GetCoverageDBClient(c), descr, jsonDec, sss)
 	if err != nil {
 		log.Errorf(c, "error storing coverage for ns %s, date %s: %v",
 			descr.Namespace, descr.DateTo.String(), err)

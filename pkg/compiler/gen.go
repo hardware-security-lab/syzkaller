@@ -264,9 +264,13 @@ func (comp *compiler) layoutArray(t *prog.ArrayType) {
 	if t.Kind == prog.ArrayRangeLen && t.RangeBegin == t.RangeEnd && !t.Elem.Varlen() {
 		t.TypeSize = t.RangeBegin * t.Elem.Size()
 	}
+	t.TypeAlign = t.Elem.Alignment()
 }
 
 func (comp *compiler) layoutUnion(t *prog.UnionType) {
+	for _, fld := range t.Fields {
+		t.TypeAlign = max(t.TypeAlign, fld.Alignment())
+	}
 	t.TypeSize = 0
 	structNode := comp.structs[t.TypeName]
 	if structNode == conditionalFieldWrapper {
@@ -284,9 +288,7 @@ func (comp *compiler) layoutUnion(t *prog.UnionType) {
 				" which is less than field %v size %v",
 				structNode.Name.Name, sizeAttr, fld.Type.Name(), sz)
 		}
-		if t.TypeSize < sz {
-			t.TypeSize = sz
-		}
+		t.TypeSize = max(t.TypeSize, sz)
 	}
 	if hasSize {
 		t.TypeSize = sizeAttr
@@ -305,6 +307,15 @@ func (comp *compiler) layoutStruct(t *prog.StructType) {
 	attrs := comp.parseIntAttrs(structAttrs, structNode, structNode.Attrs)
 	t.AlignAttr = attrs[attrAlign]
 	comp.layoutStructFields(t, varlen, attrs[attrPacked] != 0)
+	if align := attrs[attrAlign]; align != 0 {
+		t.TypeAlign = align
+	} else if attrs[attrPacked] != 0 {
+		t.TypeAlign = 1
+	} else {
+		for _, f := range t.Fields {
+			t.TypeAlign = max(t.TypeAlign, f.Alignment())
+		}
+	}
 	t.TypeSize = 0
 	if !varlen {
 		var size uint64
@@ -313,9 +324,7 @@ func (comp *compiler) layoutStruct(t *prog.StructType) {
 				size = 0
 			}
 			size += f.Size()
-			if t.TypeSize < size {
-				t.TypeSize = size
-			}
+			t.TypeSize = max(t.TypeSize, size)
 		}
 		sizeAttr, hasSize := attrs[attrSize]
 		if hasSize {
@@ -348,9 +357,7 @@ func (comp *compiler) layoutStructFields(t *prog.StructType, varlen, packed bool
 		fieldAlign := uint64(1)
 		if !packed {
 			fieldAlign = f.Alignment()
-			if structAlign < fieldAlign {
-				structAlign = fieldAlign
-			}
+			structAlign = max(structAlign, fieldAlign)
 		}
 		fullBitOffset := byteOffset*8 + bitOffset
 		var fieldOffset uint64

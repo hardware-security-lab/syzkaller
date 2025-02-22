@@ -18,6 +18,7 @@ const AllFeatures = ^Feature(0)
 // Flatbuffers compiler adds T suffix to object API types, which are actual structs representing types.
 // This leads to non-idiomatic Go code, e.g. we would have to use []FileInfoT in Go code.
 // So we use Raw suffix for all flatbuffers tables and rename object API types here to idiomatic names.
+type ConnectHello = ConnectHelloRawT
 type ConnectRequest = ConnectRequestRawT
 type ConnectReply = ConnectReplyRawT
 type InfoRequest = InfoRequestRawT
@@ -98,19 +99,6 @@ func SandboxToFlags(sandbox string) (ExecEnv, error) {
 	default:
 		return 0, fmt.Errorf("sandbox must contain one of none/setuid/namespace/android")
 	}
-}
-
-func FlagsToSandbox(flags ExecEnv) string {
-	if flags&ExecEnvSandboxNone != 0 {
-		return "none"
-	} else if flags&ExecEnvSandboxSetuid != 0 {
-		return "setuid"
-	} else if flags&ExecEnvSandboxNamespace != 0 {
-		return "namespace"
-	} else if flags&ExecEnvSandboxAndroid != 0 {
-		return "android"
-	}
-	panic("no sandbox flags present")
 }
 
 func (hdr *SnapshotHeaderT) UpdateState(state SnapshotState) {

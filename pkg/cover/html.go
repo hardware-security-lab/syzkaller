@@ -32,7 +32,7 @@ type HandlerParams struct {
 }
 
 func (rg *ReportGenerator) DoHTML(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	files, err := rg.prepareFileMap(progs, params.Force, params.Debug)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ type lineCoverExport struct {
 }
 
 func (rg *ReportGenerator) DoLineJSON(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	files, err := rg.prepareFileMap(progs, params.Force, params.Debug)
 	if err != nil {
 		return err
@@ -160,10 +160,7 @@ func fileLineContents(file *file, lines [][]byte) lineCoverExport {
 		start := 0
 		cover := append(lineCover[i+1], lineCoverChunk{End: backend.LineEnd})
 		for _, cov := range cover {
-			end := cov.End - 1
-			if end > len(ln) {
-				end = len(ln)
-			}
+			end := min(cov.End-1, len(ln))
 			if end == start {
 				continue
 			}
@@ -180,7 +177,7 @@ func fileLineContents(file *file, lines [][]byte) lineCoverExport {
 }
 
 func (rg *ReportGenerator) DoRawCoverFiles(w io.Writer, params HandlerParams) error {
-	progs := fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	progs := fixUpPCs(params.Progs, params.Filter)
 	if err := rg.symbolizePCs(uniquePCs(progs)); err != nil {
 		return err
 	}
@@ -225,14 +222,14 @@ func (rg *ReportGenerator) DoCoverJSONL(w io.Writer, params HandlerParams) error
 			return fmt.Errorf("failed to symbolize PCs(): %w", err)
 		}
 	}
-	progs := fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	progs := fixUpPCs(params.Progs, params.Filter)
 	if err := rg.symbolizePCs(uniquePCs(progs)); err != nil {
 		return err
 	}
-	progPCs := make(map[uint64]int)
+	pcProgCount := make(map[uint64]int)
 	for _, prog := range progs {
 		for _, pc := range prog.PCs {
-			progPCs[pc]++
+			pcProgCount[pc]++
 		}
 	}
 	encoder := json.NewEncoder(w)
@@ -248,7 +245,7 @@ func (rg *ReportGenerator) DoCoverJSONL(w io.Writer, params HandlerParams) error
 			StartCol:  frame.Range.StartCol,
 			EndLine:   frame.Range.EndLine,
 			EndCol:    endCol,
-			HitCount:  progPCs[frame.PC],
+			HitCount:  pcProgCount[frame.PC],
 			Inline:    frame.Inline,
 			PC:        frame.PC,
 		}
@@ -260,7 +257,7 @@ func (rg *ReportGenerator) DoCoverJSONL(w io.Writer, params HandlerParams) error
 }
 
 func (rg *ReportGenerator) DoRawCover(w io.Writer, params HandlerParams) error {
-	progs := fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	progs := fixUpPCs(params.Progs, params.Filter)
 	var pcs []uint64
 	if len(progs) == 1 && rg.rawCoverEnabled {
 		pcs = append([]uint64{}, progs[0].PCs...)
@@ -289,7 +286,7 @@ func (rg *ReportGenerator) DoRawCover(w io.Writer, params HandlerParams) error {
 }
 
 func (rg *ReportGenerator) DoFilterPCs(w io.Writer, params HandlerParams) error {
-	progs := fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	progs := fixUpPCs(params.Progs, params.Filter)
 	var pcs []uint64
 	uniquePCs := make(map[uint64]bool)
 	for _, prog := range progs {
@@ -394,7 +391,7 @@ func (rg *ReportGenerator) convertToStats(progs []Prog) ([]fileStats, error) {
 }
 
 func (rg *ReportGenerator) DoFileCover(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	data, err := rg.convertToStats(progs)
 	if err != nil {
 		return err
@@ -494,7 +491,7 @@ func groupCoverByFilePrefixes(datas []fileStats, subsystems []mgrconfig.Subsyste
 }
 
 func (rg *ReportGenerator) DoSubsystemCover(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	data, err := rg.convertToStats(progs)
 	if err != nil {
 		return err
@@ -551,18 +548,18 @@ func groupCoverByModule(datas []fileStats) map[string]map[string]string {
 		if totalFuncs[m] != 0 {
 			percentCoveredFunc[m] = 100.0 * float64(coveredFuncs[m]) / float64(totalFuncs[m])
 		}
-		lines := fmt.Sprintf("%v / %v / %.2f%%", coveredLines[m], totalLines[m], percentLines[m])
-		pcsInFiles := fmt.Sprintf("%v / %v / %.2f%%", coveredPCsInFile[m], totalPCsInFile[m], percentPCsInFile[m])
-		funcs := fmt.Sprintf("%v / %v / %.2f%%", coveredFuncs[m], totalFuncs[m], percentCoveredFunc[m])
-		pcsInFuncs := fmt.Sprintf("%v / %v / %.2f%%", coveredPCsInFuncs[m], pcsInFuncs[m], percentPCsInFunc[m])
-		covedFuncs := fmt.Sprintf("%v / %v / %.2f%%", coveredPCsInFuncs[m], pcsInCoveredFuncs[m], percentInCoveredFunc[m])
 		d[m] = map[string]string{
-			"name":              m,
-			"lines":             lines,
-			"PCsInFiles":        pcsInFiles,
-			"Funcs":             funcs,
-			"PCsInFuncs":        pcsInFuncs,
-			"PCsInCoveredFuncs": covedFuncs,
+			"name": m,
+			"lines": fmt.Sprintf("%v / %v / %.2f%%",
+				coveredLines[m], totalLines[m], percentLines[m]),
+			"PCsInFiles": fmt.Sprintf("%v / %v / %.2f%%",
+				coveredPCsInFile[m], totalPCsInFile[m], percentPCsInFile[m]),
+			"Funcs": fmt.Sprintf("%v / %v / %.2f%%",
+				coveredFuncs[m], totalFuncs[m], percentCoveredFunc[m]),
+			"PCsInFuncs": fmt.Sprintf("%v / %v / %.2f%%",
+				coveredPCsInFuncs[m], pcsInFuncs[m], percentPCsInFunc[m]),
+			"PCsInCoveredFuncs": fmt.Sprintf("%v / %v / %.2f%%",
+				coveredPCsInFuncs[m], pcsInCoveredFuncs[m], percentInCoveredFunc[m]),
 		}
 	}
 
@@ -570,7 +567,7 @@ func groupCoverByModule(datas []fileStats) map[string]map[string]string {
 }
 
 func (rg *ReportGenerator) DoModuleCover(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	data, err := rg.convertToStats(progs)
 	if err != nil {
 		return err
@@ -590,7 +587,7 @@ var csvHeader = []string{
 }
 
 func (rg *ReportGenerator) DoFuncCover(w io.Writer, params HandlerParams) error {
-	var progs = fixUpPCs(rg.target.Arch, params.Progs, params.Filter)
+	var progs = fixUpPCs(params.Progs, params.Filter)
 	files, err := rg.prepareFileMap(progs, params.Force, params.Debug)
 	if err != nil {
 		return err
@@ -621,7 +618,7 @@ func (rg *ReportGenerator) DoFuncCover(w io.Writer, params HandlerParams) error 
 	return writer.WriteAll(data)
 }
 
-func fixUpPCs(target string, progs []Prog, coverFilter map[uint64]struct{}) []Prog {
+func fixUpPCs(progs []Prog, coverFilter map[uint64]struct{}) []Prog {
 	if coverFilter != nil {
 		for i, prog := range progs {
 			var nPCs []uint64
@@ -661,10 +658,7 @@ func fileContents(file *file, lines [][]byte, haveProgs bool) string {
 		start := 0
 		cover := append(lineCover[i+1], lineCoverChunk{End: backend.LineEnd})
 		for _, cov := range cover {
-			end := cov.End - 1
-			if end > len(ln) {
-				end = len(ln)
-			}
+			end := min(cov.End-1, len(ln))
 			if end == start {
 				continue
 			}
@@ -708,9 +702,7 @@ func perLineCoverage(covered, uncovered []backend.Range) map[int][]lineCoverChun
 
 func mergeRange(lines map[int][]lineCoverChunk, r backend.Range, covered bool) {
 	// Don't panic on broken debug info, it is frequently broken.
-	if r.EndLine < r.StartLine {
-		r.EndLine = r.StartLine
-	}
+	r.EndLine = max(r.EndLine, r.StartLine)
 	if r.EndLine == r.StartLine && r.EndCol <= r.StartCol {
 		r.EndCol = backend.LineEnd
 	}
@@ -750,10 +742,7 @@ func mergeLine(chunks []lineCoverChunk, start, end int, covered bool) []lineCove
 			if chunkStart < start {
 				res = append(res, lineCoverChunk{start, chunk.Covered, chunk.Uncovered})
 			}
-			mid := end
-			if mid > chunk.End {
-				mid = chunk.End
-			}
+			mid := min(end, chunk.End)
 			res = append(res, lineCoverChunk{mid, chunk.Covered || covered, chunk.Uncovered || !covered})
 			if chunk.End > end {
 				res = append(res, lineCoverChunk{chunk.End, chunk.Covered, chunk.Uncovered})
@@ -824,12 +813,12 @@ func processDir(dir *templateDir) {
 	}
 }
 
-func percent(covered, total int) int {
+func percent[T int | int64](covered, total T) T {
 	f := math.Ceil(float64(covered) / float64(total) * 100)
 	if f == 100 && covered < total {
 		f = 99
 	}
-	return int(f)
+	return T(f)
 }
 
 func parseFile(fn string) ([][]byte, error) {

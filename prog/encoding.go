@@ -885,12 +885,8 @@ func (p *parser) parseAddr() (uint64, uint64, error) {
 		}
 		if !p.unsafe {
 			maxMem := target.NumPages * target.PageSize
-			if vmaSize > maxMem {
-				vmaSize = maxMem
-			}
-			if addr > maxMem-vmaSize {
-				addr = maxMem - vmaSize
-			}
+			vmaSize = min(vmaSize, maxMem)
+			addr = min(addr, maxMem-vmaSize)
 		}
 	}
 	p.Parse(')')
@@ -1190,10 +1186,6 @@ func (p *parser) Scan() bool {
 
 func (p *parser) Err() error {
 	return p.e
-}
-
-func (p *parser) Str() string {
-	return p.s
 }
 
 func (p *parser) EOF() bool {

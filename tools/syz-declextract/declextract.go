@@ -46,7 +46,7 @@ func main() {
 	loadProbeInfo := func() (*ifaceprobe.Info, error) {
 		return probe(cfg, *flagConfig)
 	}
-	if err := run(filepath.FromSlash("sys/linux/auto.txt"), loadProbeInfo, &clangtool.Config{
+	if _, err := run(filepath.FromSlash("sys/linux/auto.txt"), loadProbeInfo, &clangtool.Config{
 		ToolBin:    *flagBinary,
 		KernelSrc:  cfg.KernelSrc,
 		KernelObj:  cfg.KernelObj,
@@ -57,20 +57,21 @@ func main() {
 	}
 }
 
-func run(autoFile string, loadProbeInfo func() (*ifaceprobe.Info, error), cfg *clangtool.Config) error {
+func run(autoFile string, loadProbeInfo func() (*ifaceprobe.Info, error), cfg *clangtool.Config) (
+	*declextract.Result, error) {
 	out, probeInfo, syscallRename, err := prepare(loadProbeInfo, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	descriptions, interfaces, err := declextract.Run(out, probeInfo, syscallRename, cfg.DebugTrace)
+	res, err := declextract.Run(out, probeInfo, syscallRename, cfg.DebugTrace)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := osutil.WriteFile(autoFile, descriptions); err != nil {
-		return err
+	if err := osutil.WriteFile(autoFile, res.Descriptions); err != nil {
+		return nil, err
 	}
-	if err := osutil.WriteFile(autoFile+".info", serialize(interfaces)); err != nil {
-		return err
+	if err := osutil.WriteFile(autoFile+".info", serialize(res.Interfaces)); err != nil {
+		return nil, err
 	}
 	// In order to remove unused bits of the descriptions, we need to write them out first,
 	// and then parse all descriptions back b/c auto descriptions use some types defined
@@ -79,21 +80,38 @@ func run(autoFile string, loadProbeInfo func() (*ifaceprobe.Info, error), cfg *c
 	eh, errors := errorHandler()
 	desc := ast.ParseGlob(filepath.Join(filepath.Dir(autoFile), "*.txt"), eh)
 	if desc == nil {
-		return fmt.Errorf("failed to parse descriptions\n%s", errors.Bytes())
+		return nil, fmt.Errorf("failed to parse descriptions\n%s", errors.Bytes())
 	}
 	// Need to clone descriptions b/c CollectUnused changes them slightly during type checking.
 	unusedNodes, err := compiler.CollectUnused(desc.Clone(), target, eh)
 	if err != nil {
-		return fmt.Errorf("failed to typecheck descriptions: %w\n%s", err, errors.Bytes())
+		return nil, fmt.Errorf("failed to typecheck descriptions: %w\n%s", err, errors.Bytes())
 	}
 	consts := compiler.ExtractConsts(desc.Clone(), target, eh)
 	if consts == nil {
-		return fmt.Errorf("failed to typecheck descriptions: %w\n%s", err, errors.Bytes())
+		return nil, fmt.Errorf("failed to typecheck descriptions: %w\n%s", err, errors.Bytes())
 	}
-	finishInterfaces(interfaces, consts, autoFile)
-	if err := osutil.WriteFile(autoFile+".info", serialize(interfaces)); err != nil {
-		return err
+	finishInterfaces(res.Interfaces, consts, autoFile)
+	if err := osutil.WriteFile(autoFile+".info", serialize(res.Interfaces)); err != nil {
+		return nil, err
 	}
+	removeUnused(desc, "", unusedNodes)
+	// Second pass to remove unused defines/includes. This needs to be done after removing
+	// other garbage b/c they may be used by other garbage.
+	unusedConsts, err := compiler.CollectUnusedConsts(desc.Clone(), target, res.IncludeUse, eh)
+	if err != nil {
+		return nil, fmt.Errorf("failed to typecheck descriptions: %w\n%s", err, errors.Bytes())
+	}
+	removeUnused(desc, autoFile, unusedConsts)
+	// We need re-parse them again b/c new lines are fixed up during parsing.
+	formatted := ast.Format(ast.Parse(ast.Format(desc), autoFile, nil))
+	if err := osutil.WriteFile(autoFile, formatted); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func removeUnused(desc *ast.Description, autoFile string, unusedNodes []ast.Node) {
 	unused := make(map[string]bool)
 	for _, n := range unusedNodes {
 		_, typ, name := n.Info()
@@ -101,11 +119,8 @@ func run(autoFile string, loadProbeInfo func() (*ifaceprobe.Info, error), cfg *c
 	}
 	desc.Nodes = slices.DeleteFunc(desc.Nodes, func(n ast.Node) bool {
 		pos, typ, name := n.Info()
-		return pos.File != autoFile || unused[typ+name]
+		return autoFile != "" && pos.File != autoFile || unused[typ+name]
 	})
-	// We need re-parse them again b/c new lines are fixed up during parsing.
-	formatted := ast.Format(ast.Parse(ast.Format(desc), autoFile, nil))
-	return osutil.WriteFile(autoFile, formatted)
 }
 
 func prepare(loadProbeInfo func() (*ifaceprobe.Info, error), cfg *clangtool.Config) (
@@ -308,8 +323,8 @@ func parseTblFile(data []byte, arch string, syscalls map[string][]tblSyscall) {
 func findTblFiles(sourceDir string) (map[string][]string, error) {
 	files := make(map[string][]string)
 	for _, arch := range targets.List[target.OS] {
-		err := filepath.Walk(filepath.Join(sourceDir, "arch", arch.KernelHeaderArch),
-			func(file string, info fs.FileInfo, err error) error {
+		err := filepath.WalkDir(filepath.Join(sourceDir, "arch", arch.KernelHeaderArch),
+			func(file string, d fs.DirEntry, err error) error {
 				if err == nil && strings.HasSuffix(file, ".tbl") {
 					files[file] = append(files[file], arch.VMArch)
 				}

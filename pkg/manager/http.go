@@ -5,6 +5,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -67,9 +68,9 @@ type HTTPServer struct {
 	paused     bool
 }
 
-func (serv *HTTPServer) Serve() {
+func (serv *HTTPServer) Serve(ctx context.Context) error {
 	if serv.Cfg.HTTP == "" {
-		log.Fatalf("starting a disabled HTTP server")
+		return fmt.Errorf("starting a disabled HTTP server")
 	}
 	if serv.Pool != nil {
 		serv.Pools = map[string]*vm.Dispatcher{"": serv.Pool}
@@ -77,43 +78,54 @@ func (serv *HTTPServer) Serve() {
 	handle := func(pattern string, handler func(http.ResponseWriter, *http.Request)) {
 		http.Handle(pattern, handlers.CompressHandler(http.HandlerFunc(handler)))
 	}
+	// keep-sorted start
 	handle("/", serv.httpMain)
 	handle("/action", serv.httpAction)
-	handle("/config", serv.httpConfig)
-	handle("/stats", serv.httpStats)
-	handle("/vms", serv.httpVMs)
-	handle("/vm", serv.httpVM)
-	handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}).ServeHTTP)
 	handle("/addcandidate", serv.httpAddCandidate)
-	handle("/syscalls", serv.httpSyscalls)
+	handle("/config", serv.httpConfig)
 	handle("/corpus", serv.httpCorpus)
 	handle("/corpus.db", serv.httpDownloadCorpus)
+	handle("/cover", serv.httpCover)
+	handle("/debuginput", serv.httpDebugInput)
+	handle("/file", serv.httpFile)
+	handle("/filecover", serv.httpFileCover)
+	handle("/filterpcs", serv.httpFilterPCs)
+	handle("/funccover", serv.httpFuncCover)
+	handle("/input", serv.httpInput)
+	handle("/jobs", serv.httpJobs)
+	handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{}).ServeHTTP)
+	handle("/modulecover", serv.httpModuleCover)
+	handle("/modules", serv.modulesInfo)
+	handle("/prio", serv.httpPrio)
+	handle("/rawcover", serv.httpRawCover)
+	handle("/rawcoverfiles", serv.httpRawCoverFiles)
+	handle("/stats", serv.httpStats)
+	handle("/subsystemcover", serv.httpSubsystemCover)
+	handle("/syscalls", serv.httpSyscalls)
+	handle("/vm", serv.httpVM)
+	handle("/vms", serv.httpVMs)
+	// keep-sorted end
 	if serv.CrashStore != nil {
 		handle("/crash", serv.httpCrash)
 		handle("/report", serv.httpReport)
 	}
-	handle("/cover", serv.httpCover)
-	handle("/subsystemcover", serv.httpSubsystemCover)
-	handle("/modulecover", serv.httpModuleCover)
-	handle("/prio", serv.httpPrio)
-	handle("/file", serv.httpFile)
-	handle("/rawcover", serv.httpRawCover)
-	handle("/rawcoverfiles", serv.httpRawCoverFiles)
-	handle("/filterpcs", serv.httpFilterPCs)
-	handle("/funccover", serv.httpFuncCover)
-	handle("/filecover", serv.httpFileCover)
-	handle("/input", serv.httpInput)
-	handle("/debuginput", serv.httpDebugInput)
-	handle("/modules", serv.modulesInfo)
-	handle("/jobs", serv.httpJobs)
 	// Browsers like to request this, without special handler this goes to / handler.
 	handle("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {})
 
 	log.Logf(0, "serving http on http://%v", serv.Cfg.HTTP)
-	err := http.ListenAndServe(serv.Cfg.HTTP, nil)
-	if err != nil {
-		log.Fatalf("failed to listen on %v: %v", serv.Cfg.HTTP, err)
+	server := &http.Server{Addr: serv.Cfg.HTTP}
+	go func() {
+		// The http server package unfortunately does not natively take a context.Context.
+		// Let's emulate it via server.Shutdown()
+		<-ctx.Done()
+		server.Close()
+	}()
+
+	err := server.ListenAndServe()
+	if err != http.ErrServerClosed {
+		return err
 	}
+	return nil
 }
 
 func (serv *HTTPServer) httpAction(w http.ResponseWriter, r *http.Request) {
@@ -343,7 +355,9 @@ func makeUICrashType(info *BugInfo, startTime time.Time, repros map[string]bool)
 		info.ReproAttempts >= MaxReproAttempts)
 	return UICrashType{
 		Description: info.Title,
+		FirstTime:   info.FirstTime,
 		LastTime:    info.LastTime,
+		New:         info.FirstTime.After(startTime),
 		Active:      info.LastTime.After(startTime),
 		ID:          info.ID,
 		Count:       len(info.Crashes),
@@ -992,8 +1006,10 @@ type UICrashPage struct {
 
 type UICrashType struct {
 	Description string
+	FirstTime   time.Time
 	LastTime    time.Time
-	Active      bool
+	New         bool // was first found in the current run
+	Active      bool // was found in the current run
 	ID          string
 	Count       int
 	Triaged     string

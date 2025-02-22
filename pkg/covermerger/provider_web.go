@@ -4,11 +4,13 @@
 package covermerger
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 type FuncProxyURI func(filePath, commit string) string
@@ -18,8 +20,8 @@ type webGit struct {
 }
 
 func (mr *webGit) GetFileVersions(targetFilePath string, repoCommits ...RepoCommit,
-) (fileVersions, error) {
-	res := make(fileVersions)
+) (FileVersions, error) {
+	res := make(FileVersions)
 	for _, repoCommit := range repoCommits {
 		fileBytes, err := mr.loadFile(targetFilePath, repoCommit.Repo, repoCommit.Commit)
 		// It is ok if some file doesn't exist. It means we have repo FS diff.
@@ -52,36 +54,43 @@ func (mr *webGit) loadFile(filePath, repo, commit string) ([]byte, error) {
 	}
 	u.Scheme = "https"
 	uri = u.String()
-	res, err := http.Get(uri)
+	resp, err := http.Get(uri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to http.Get: %w", err)
 	}
-	defer res.Body.Close()
+	defer resp.Body.Close()
 
-	if res.StatusCode == 404 {
+	if resp.StatusCode == 404 {
 		return nil, errFileNotFound
 	}
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("error: status %d getting '%s'", res.StatusCode, uri)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("error: status %d getting '%s'", resp.StatusCode, uri)
 	}
-	body, err := io.ReadAll(res.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to io.ReadAll from body: %w", err)
 	}
+	if isGerritServer(resp) {
+		if body, err = base64.StdEncoding.DecodeString(string(body)); err != nil {
+			return nil, fmt.Errorf("base64.StdEncoding.DecodeString: %w", err)
+		}
+	}
 	return body, nil
+}
+
+func isGerritServer(resp *http.Response) bool {
+	for _, headerVals := range resp.Header {
+		for _, header := range headerVals {
+			if strings.Contains(header, "gerrit") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func MakeWebGit(funcProxy FuncProxyURI) FileVersProvider {
 	return &webGit{
 		funcProxy: funcProxy,
 	}
-}
-
-func GetFileVersion(filePath, repo, commit string) (string, error) {
-	repoCommit := RepoCommit{repo, commit}
-	files, err := MakeWebGit(nil).GetFileVersions(filePath, repoCommit)
-	if err != nil {
-		return "", fmt.Errorf("failed to GetFileVersions: %w", err)
-	}
-	return files[repoCommit], nil
 }

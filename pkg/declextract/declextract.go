@@ -15,29 +15,50 @@ import (
 	"github.com/google/syzkaller/pkg/ifaceprobe"
 )
 
+type Result struct {
+	Descriptions []byte
+	Interfaces   []*Interface
+	IncludeUse   map[string]string
+	StructInfo   map[string]*StructInfo
+}
+
+type StructInfo struct {
+	Size  int
+	Align int
+}
+
 func Run(out *Output, probe *ifaceprobe.Info, syscallRename map[string][]string, trace io.Writer) (
-	[]byte, []*Interface, error) {
+	*Result, error) {
 	ctx := &context{
 		Output:        out,
 		probe:         probe,
 		syscallRename: syscallRename,
 		structs:       make(map[string]*Struct),
 		funcs:         make(map[string]*Function),
+		ioctls:        make(map[string]*Type),
 		facts:         make(map[string]*typingNode),
 		uniqualizer:   make(map[string]int),
 		debugTrace:    trace,
 	}
 	ctx.processFunctions()
 	ctx.processTypingFacts()
-	ctx.processIncludes()
+	includeUse := ctx.processConsts()
 	ctx.processEnums()
-	ctx.processStructs()
+	structInfo := ctx.processStructs()
 	ctx.processSyscalls()
 	ctx.processIouring()
 
 	ctx.serialize()
 	ctx.finishInterfaces()
-	return ctx.descriptions.Bytes(), ctx.interfaces, errors.Join(ctx.errs...)
+	if len(ctx.errs) != 0 {
+		return nil, errors.Join(ctx.errs...)
+	}
+	return &Result{
+		Descriptions: ctx.descriptions.Bytes(),
+		Interfaces:   ctx.interfaces,
+		IncludeUse:   includeUse,
+		StructInfo:   structInfo,
+	}, nil
 }
 
 type context struct {
@@ -46,12 +67,20 @@ type context struct {
 	syscallRename map[string][]string // syscall function -> syscall names
 	structs       map[string]*Struct
 	funcs         map[string]*Function
+	ioctls        map[string]*Type
 	facts         map[string]*typingNode
+	includes      []string
+	defines       []define
 	uniqualizer   map[string]int
 	interfaces    []*Interface
 	descriptions  *bytes.Buffer
 	debugTrace    io.Writer
 	errs          []error
+}
+
+type define struct {
+	Name  string
+	Value string
 }
 
 func (ctx *context) error(msg string, args ...any) {
@@ -68,14 +97,7 @@ func (ctx *context) trace(msg string, args ...any) {
 	}
 }
 
-func (ctx *context) processIncludes() {
-	// These additional includes must be at the top, because other kernel headers
-	// are broken and won't compile without these additional ones included first.
-	ctx.Includes = append([]string{
-		"vdso/bits.h",
-		"linux/types.h",
-		"net/netlink.h",
-	}, ctx.Includes...)
+func (ctx *context) processConsts() map[string]string {
 	replaces := map[string]string{
 		// Arches may use some includes from asm-generic and some from arch/arm.
 		// If the arch used for extract used asm-generic for a header,
@@ -84,11 +106,49 @@ func (ctx *context) processIncludes() {
 		"include/uapi/asm-generic/ioctls.h":  "asm/ioctls.h",
 		"include/uapi/asm-generic/sockios.h": "asm/sockios.h",
 	}
-	for i, inc := range ctx.Includes {
-		if replace := replaces[inc]; replace != "" {
-			ctx.Includes[i] = replace
+	defineDedup := make(map[string]bool)
+	includeUse := make(map[string]string)
+	for _, ci := range ctx.Consts {
+		if strings.Contains(ci.Filename, "/uapi/") && !strings.Contains(ci.Filename, "arch/x86/") &&
+			strings.HasSuffix(ci.Filename, ".h") {
+			filename := ci.Filename
+			if replace := replaces[filename]; replace != "" {
+				filename = replace
+			}
+			ctx.includes = append(ctx.includes, filename)
+			includeUse[ci.Name] = filename
+			continue
 		}
+		// Remove duplicate defines (even with different values). Unfortunately we get few of these.
+		// There are some syscall numbers (presumably for 32/64 bits), and some macros that
+		// are defined in different files to different values (e.g. WMI_DATA_BE_SVC).
+		// Ideally we somehow rename defines (chosing one random value is never correct).
+		// But for now this helps to prevent compilation errors.
+		if defineDedup[ci.Name] {
+			continue
+		}
+		defineDedup[ci.Name] = true
+		ctx.defines = append(ctx.defines, define{
+			Name:  ci.Name,
+			Value: fmt.Sprint(ci.Value),
+		})
 	}
+	ctx.includes = sortAndDedupSlice(ctx.includes)
+	ctx.defines = sortAndDedupSlice(ctx.defines)
+	// These additional includes must be at the top, because other kernel headers
+	// are broken and won't compile without these additional ones included first.
+	ctx.includes = append([]string{
+		"vdso/bits.h",
+		"linux/types.h",
+		"linux/usbdevice_fs.h", // to fix broken include/uapi/linux/usbdevice_fs.h
+		"net/netlink.h",
+	}, ctx.includes...)
+	// Also pretend they are used.
+	includeUse["__NR_read"] = "vdso/bits.h"
+	includeUse["__NR_write"] = "linux/types.h"
+	includeUse["__NR_openat"] = "linux/usbdevice_fs.h"
+	includeUse["__NR_close"] = "net/netlink.h"
+	return includeUse
 }
 
 func (ctx *context) processEnums() {
@@ -106,22 +166,41 @@ func (ctx *context) processSyscalls() {
 			typ := ctx.inferArgType(call.Func, call.SourceFile, i)
 			refineFieldType(arg, typ, false)
 		}
-		fn := strings.TrimPrefix(call.Func, "__do_sys_")
-		for _, name := range ctx.syscallRename[fn] {
-			ctx.noteInterface(&Interface{
-				Type:             IfaceSyscall,
-				Name:             name,
-				IdentifyingConst: "__NR_" + name,
-				Files:            []string{call.SourceFile},
-				Func:             call.Func,
-				AutoDescriptions: true,
-			})
-			newCall := *call
-			newCall.Func = name + autoSuffix
-			syscalls = append(syscalls, &newCall)
+		ctx.emitSyscall(&syscalls, call, "")
+		for i := range call.Args {
+			cmds := ctx.inferCommandVariants(call.Func, call.SourceFile, i)
+			for _, cmd := range cmds {
+				variant := *call
+				variant.Args = slices.Clone(call.Args)
+				newArg := *variant.Args[i]
+				newArg.syzType = fmt.Sprintf("const[%v]", cmd)
+				variant.Args[i] = &newArg
+				suffix := cmd
+				if call.Func == "__do_sys_ioctl" {
+					suffix = ctx.uniqualize("ioctl cmd", cmd)
+				}
+				ctx.emitSyscall(&syscalls, &variant, "_"+suffix)
+			}
 		}
 	}
 	ctx.Syscalls = sortAndDedupSlice(syscalls)
+}
+
+func (ctx *context) emitSyscall(syscalls *[]*Syscall, call *Syscall, suffix string) {
+	fn := strings.TrimPrefix(call.Func, "__do_sys_")
+	for _, name := range ctx.syscallRename[fn] {
+		ctx.noteInterface(&Interface{
+			Type:             IfaceSyscall,
+			Name:             name,
+			IdentifyingConst: "__NR_" + name,
+			Files:            []string{call.SourceFile},
+			Func:             call.Func,
+			AutoDescriptions: true,
+		})
+		newCall := *call
+		newCall.Func = name + autoSuffix + suffix
+		*syscalls = append(*syscalls, &newCall)
+	}
 }
 
 func (ctx *context) processIouring() {
@@ -137,14 +216,16 @@ func (ctx *context) processIouring() {
 	}
 }
 
-func (ctx *context) processStructs() {
+func (ctx *context) processStructs() map[string]*StructInfo {
+	structInfo := make(map[string]*StructInfo)
 	for _, str := range ctx.Structs {
 		str.Name += autoSuffix
 		ctx.structs[str.Name] = str
+		structInfo[str.Name] = &StructInfo{
+			Size:  str.ByteSize,
+			Align: str.Align,
+		}
 	}
-	ctx.Structs = slices.DeleteFunc(ctx.Structs, func(str *Struct) bool {
-		return str.ByteSize == 0 // Empty structs are not supported.
-	})
 	for _, str := range ctx.Structs {
 		ctx.processFields(str.Fields, str.Name, true)
 		name := strings.TrimSuffix(str.Name, autoSuffix)
@@ -153,6 +234,7 @@ func (ctx *context) processStructs() {
 			refineFieldType(f, typ, true)
 		}
 	}
+	return structInfo
 }
 
 func (ctx *context) processFields(fields []*Field, parent string, needBase bool) {
@@ -350,8 +432,17 @@ func (ctx *context) fieldTypeArray(f *Field, parent string) string {
 		Type: t.Elem,
 	}
 	elemType := ctx.fieldType(elem, nil, parent, true)
-	if t.MinSize == 1 && t.MaxSize == 1 {
-		return elemType
+	if t.IsConstSize {
+		switch t.MaxSize {
+		case 0:
+			// Empty arrays may still affect parent struct layout, if the element type
+			// has alignment >1. We don't support arrays of size 0, so emit a special
+			// aligning type instead.
+			return fmt.Sprintf("auto_aligner[%v]", t.Align)
+		case 1:
+			// Array of size 1 is not really an array, just use the element type itself.
+			return elemType
+		}
 	}
 	bounds := ctx.bounds(f.Name, t.MinSize, t.MaxSize)
 	return fmt.Sprintf("array[%v%v]", elemType, bounds)
@@ -406,9 +497,16 @@ func (ctx *context) fieldTypeStruct(f *Field) string {
 	case "__kernel_sockaddr_storage":
 		return "sockaddr_storage"
 	}
-	f.Type.Struct += autoSuffix
-	if ctx.structs[f.Type.Struct].ByteSize == 0 {
-		return voidType
+	// We can get here several times for the same struct.
+	if !strings.HasSuffix(f.Type.Struct, autoSuffix) {
+		f.Type.Struct += autoSuffix
+	}
+	str := ctx.structs[f.Type.Struct]
+	if str == nil {
+		panic(fmt.Sprintf("can't find struct %v", f.Type.Struct))
+	}
+	if str.ByteSize == 0 {
+		return fmt.Sprintf("auto_aligner[%v]", str.Align)
 	}
 	return f.Type.Struct
 }

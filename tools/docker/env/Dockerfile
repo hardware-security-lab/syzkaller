@@ -25,7 +25,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q curl
 # otherwise --volume will create these dirs under root and then
 # the current user won't have access to them.
 RUN mkdir -p /syzkaller/gopath/src/github.com/google/syzkaller && \
-	mkdir -p /syzkaller/.cache && \
+	mkdir -p /syzkaller/.cache/gomod && \
 	chmod -R 0777 /syzkaller
 
 # Install OS toolchains from pre-built archives.
@@ -80,9 +80,12 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends
 	apt-get clean autoclean && \
 	rm -rf /var/lib/apt/lists/{apt,dpkg,cache,log} /tmp/* /var/tmp/*
 
+# Since go 1.21 the toolchain required by go.mod is automatically downloaded.
+# There is no need to version up golang here after go.mod changes.
 RUN curl https://dl.google.com/go/go1.22.7.linux-amd64.tar.gz | tar -C /usr/local -xz
 ENV PATH /usr/local/go/bin:/gopath/bin:$PATH
 ENV GOPATH /gopath
+ENV GOMODCACHE /syzkaller/.cache/gomod
 
 # Install clang.
 RUN apt-get install -y -q gnupg software-properties-common apt-transport-https

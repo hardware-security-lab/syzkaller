@@ -61,10 +61,7 @@ func (t *tty) Read(buf []byte) (int, error) {
 		return 0, io.EOF
 	}
 	n, err := syscall.Read(t.fd, buf)
-	if n < 0 {
-		n = 0
-	}
-	return n, err
+	return max(n, 0), err
 }
 
 func (t *tty) Close() error {
@@ -80,12 +77,34 @@ func (t *tty) Close() error {
 // OpenRemoteKernelLog accesses to the host where Android VM runs on, not Android VM itself.
 // The host stores all kernel outputs of Android VM so in case of crashes nothing will be lost.
 func OpenRemoteKernelLog(ip, console string) (rc io.ReadCloser, err error) {
+	conAddr := "vsoc-01@" + ip
+	args := []string{
+		conAddr,
+		"tail",
+		"-f",
+		console,
+	}
+	return OpenConsoleByCmd("ssh", args)
+}
+
+// Open dmesg remotely.
+func OpenRemoteConsole(bin string, args ...string) (rc io.ReadCloser, err error) {
+	args = append(args, "dmesg -w")
+	return OpenConsoleByCmd(bin, args)
+}
+
+// OpenAdbConsole provides fallback console output using 'adb shell dmesg -w'.
+func OpenAdbConsole(bin, dev string) (rc io.ReadCloser, err error) {
+	return OpenRemoteConsole(bin, "-s", dev, "shell")
+}
+
+// Open console log by cmd.
+func OpenConsoleByCmd(bin string, args []string) (rc io.ReadCloser, err error) {
 	rpipe, wpipe, err := osutil.LongPipe()
 	if err != nil {
 		return nil, err
 	}
-	conAddr := "vsoc-01@" + ip
-	cmd := osutil.Command("ssh", conAddr, "tail", "-f", console)
+	cmd := osutil.Command(bin, args...)
 	cmd.Stdout = wpipe
 	cmd.Stderr = wpipe
 	if _, err := cmd.StdinPipe(); err != nil {
@@ -96,30 +115,7 @@ func OpenRemoteKernelLog(ip, console string) (rc io.ReadCloser, err error) {
 	if err := cmd.Start(); err != nil {
 		rpipe.Close()
 		wpipe.Close()
-		return nil, fmt.Errorf("failed to connect to console server: %w", err)
-	}
-	wpipe.Close()
-	con := &remoteCon{
-		cmd:   cmd,
-		rpipe: rpipe,
-	}
-	return con, nil
-}
-
-// Open dmesg remotely.
-func OpenRemoteConsole(bin string, args ...string) (rc io.ReadCloser, err error) {
-	rpipe, wpipe, err := osutil.LongPipe()
-	if err != nil {
-		return nil, err
-	}
-	args = append(args, "dmesg -w")
-	cmd := osutil.Command(bin, args...)
-	cmd.Stdout = wpipe
-	cmd.Stderr = wpipe
-	if err := cmd.Start(); err != nil {
-		rpipe.Close()
-		wpipe.Close()
-		return nil, fmt.Errorf("failed to start adb: %w", err)
+		return nil, fmt.Errorf("failed to open console: %w", err)
 	}
 	wpipe.Close()
 	con := &remoteCon{
@@ -127,11 +123,6 @@ func OpenRemoteConsole(bin string, args ...string) (rc io.ReadCloser, err error)
 		rpipe: rpipe,
 	}
 	return con, err
-}
-
-// OpenAdbConsole provides fallback console output using 'adb shell dmesg -w'.
-func OpenAdbConsole(bin, dev string) (rc io.ReadCloser, err error) {
-	return OpenRemoteConsole(bin, "-s", dev, "shell")
 }
 
 type remoteCon struct {

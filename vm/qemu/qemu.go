@@ -191,7 +191,7 @@ var archConfigs = map[string]*archConfig{
 	},
 	"linux/riscv64": {
 		Qemu:                   "qemu-system-riscv64",
-		QemuArgs:               "-machine virt",
+		QemuArgs:               "-machine virt -cpu rv64,sv48=on",
 		NetDev:                 "virtio-net-pci",
 		RngDev:                 "virtio-rng-pci",
 		UseNewQemuImageOptions: true,
@@ -351,6 +351,9 @@ func (pool *Pool) Create(workdir string, index int) (vmimpl.Instance, error) {
 			continue
 		}
 		if i < 1000 && strings.Contains(err.Error(), "Device or resource busy") {
+			continue
+		}
+		if i < 1000 && strings.Contains(err.Error(), "Address already in use") {
 			continue
 		}
 		return nil, err
