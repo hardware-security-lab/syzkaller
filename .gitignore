@@ -7,7 +7,9 @@ workdir
 *.db
 bin/
 dashboard/app/config_prod.go
-
+tools/syz-cover/*.raw
+tools/syz-cover/*.csv
+tools/syz-cover/*.html
 # stub file used by Makefile
 .descriptions
 
